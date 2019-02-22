@@ -24,3 +24,6 @@ README.long.adoc
 .vscode/
 setup.*
 .idea/
+
+#boost generated Dockerfile
+Dockerfile
