@@ -24,6 +24,7 @@ README.long.adoc
 .vscode/
 setup.*
 .idea/
+*.iml
 
 #boost generated Dockerfile
 Dockerfile
