@@ -1,11 +1,12 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: hazelcast-caching-deployment
+  name: hazelcast-caching-statefulset
   labels:
     app: hazelcast-caching
 spec:
   replicas: 2
+  serviceName: hazelcast-caching-service
   selector:
     matchLabels:
       app: hazelcast-caching
@@ -19,13 +20,13 @@ spec:
           image: hazelcast-caching:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 9080
+            - name: openliberty
+              containerPort: 9080
           env:
             - name: MY_POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-
 
 ---
 apiVersion: v1
