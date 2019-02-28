@@ -24,8 +24,8 @@ public class CommandController {
 
     @RequestMapping("/put")
     public CommandResponse put(@RequestParam(value = "key") String key, @RequestParam(value = "value") String value) {
-        String oldValue = retrieveMap().put(key, value);
-        return new CommandResponse(oldValue,podName);
+        retrieveMap().put(key, value);
+        return new CommandResponse(value,podName);
     }
 
     @RequestMapping("/get")

@@ -90,20 +90,41 @@ include::{common-includes}/gitclone.adoc[]
 include::{common-includes}/kube-start.adoc[]
 
 // =================================================================================================
+// Use Hazelcast Caching in Spring Boot Application
+// =================================================================================================
+
+== Use Hazelcast Caching in Spring Boot Application
+
+The microservice in the `start` directory has in-process cache which is not accessible between microservices.
+
+Firstly, you need to configure Hazelcast to be used in Spring Boot Application.
+replace `Application.java` with the following java class.
+
+[source, java]
+----
+include::finish/src/main/java/io/openliberty/guides/hazelcast/Application.java[tags=**;]
+----
+
+This configuration will tell Spring Boot what kind of configuration is needed when each hazelcast member is started.
+
+Now it is time to use Hazelcast in the hazelcast-caching microservice.
+if you check the source code of `CommandController.java`, you would notice that `ConcurrentHashMap` is used 
+for backing key value store. In order to make this cache distributed, replace `CommandController.java`
+with Hazelcast version.
+
+[source, java]
+----
+include::finish/src/main/java/io/openliberty/guides/hazelcast/CommandController.java[tags=**;]
+----
+
+You would notice that getting hazelcast member is `Autowired` by Spring Boot and made available to the `CommandController`
+and there is no change in `/put` and `/get` endpoints.
+
+// =================================================================================================
 // Building and containerizing the microservices
 // =================================================================================================
 
-== Building and containerizing the microservices
-
-docker images
-
-
-http://192.168.99.100:31000/put?key=1&value=hazelcast_loves_openliberty
-192.168.99.100:31000/get?key=1
-
-explain that data is not shared...
-
-
+== Building and containerizing microservice
 
 The first step of deploying to {kube} is to build your microservices and containerize them with Docker.
 
@@ -118,7 +139,7 @@ https://github.com/OpenLiberty/boost/tree/master/boost-maven
 If you want to create your own Dockerfile then you can always use dockerfile-maven plugin. 
 please refer to https://openliberty.io/guides/kubernetes-intro.html#starting-and-preparing-your-cluster-for-deployment
 
-To build `hazelcast-caching` microservice, navigate to the start directory and run the following command.
+To build `hazelcast-caching` microservice, run the following command.
 
 [role='command']
 ```
@@ -203,18 +224,42 @@ To deploy the `hazelcast-caching` microservice, first create the `kubernetes.yam
 include::finish/kubernetes.yaml[tags=**;]
 ----
 
-This file defines two {kube} resources. It defines one deployment and one service. 
-Finally, the `containerPort` is the port that your container exposes for purposes of accessing your application. 
-For the services, the key point to understand is that they expose your deployments. The binding between deployments and services is specified by the use of labels -- in this case the `app` label. You will also notice the service has a type of `NodePort`. This means you can access these services from outside of your cluster via a specific port. In this case, the ports will be `31000` and `32000`, but it can also be randomized if the `nodePort` field is not used.
+This file defines two {kube} resources. It defines one statefulset and one service. 
+StatefulSet is preferred solution for Hazelcast because it enables controlled scale out/in of your microservices 
+for easy data distribution. To learn more about StatefulSet, you can visit Kubernetes documentationhttps://kubernetes.io/docs/tutorials/stateful-application/basic-stateful-set/
 
-Run the following commands to deploy the resources as defined in kubernetes.yaml:
+By default, we create 2 replicas of `hazelcast-caching` microservice behind the `hazelcast-caching-service` which forwards
+requests to one of the pods available in the kubernetes cluster.
 
+`MY_POD_NAME` is an environment variable made available to the pods so that each microservice knows which pod they are in.
+This is going to be used in this guide in order to show which pod is responding to the http request.
+
+As a second step, we will create rbac.yaml 
+
+[source, yaml]
+----
+include::finish/rbac.yaml[tags=**;]
+----
+
+Role Based Access Controller(RBAC) configuration is used to give access to Kubernetes Master API from pods which runs 
+microservices. Hazelcast requires a read access to autodiscovery other hazelcast members to create distributed cache among 
+clusters
+
+Run the following commands to deploy the resources as defined in kubernetes.yaml and rbac.yaml in the specified order:
+
+[role='command']
+```
+kubectl apply -f rbac.yaml
+```
+
+[role='command']
 ```
 kubectl apply -f kubernetes.yaml
 ```
 
 run the following command to check the status of your pods:
 
+[role='command']
 ```
 kubectl get pods
 ```
@@ -223,19 +268,24 @@ You'll see an output similar to the following if all the pods are healthy and ru
 
 [source, role="no_copy"]
 ----
-NAME                               READY     STATUS    RESTARTS   AGE
-name-deployment-6bd97d9bf6-4ccds   1/1       Running   0          15s
-ping-deployment-645767664f-nbtd9   1/1       Running   0          15s
+NAME                              READY     STATUS    RESTARTS   AGE
+hazelcast-caching-statefulset-0   1/1       Running   0          20m
+hazelcast-caching-statefulset-1   1/1       Running   0          20m
 ----
 
-You can also inspect individual pods in more detail by running the following command:
+You should also check if hazelcast cluster is formed by checking one of the pod's log file:
 
 ```
-kubectl describe pods
+kubectl logs pods
 ```
 
-You can also issue the `kubectl get` and `kubectl describe` commands on other {kube} resources, so feel
-free to inspect all other resources.
+[source, role="no_copy"]
+----
+Members {size:2, ver:2} [
+	Member [172.17.0.4]:5701 - 71009ef7-ee18-45f0-8a8f-e9321931e9ce this
+	Member [172.17.0.5]:5701 - 99222e16-93e5-4453-ac9e-cdf3e80069c6
+]
+----
 
 Next you will make requests to your services.
 
@@ -249,24 +299,49 @@ The default hostname for Docker Desktop is `localhost`.
 The default hostname for minikube is {minikube-ip}. Otherwise it can be found using the `minikube ip` command.
 ****
 
-Then `curl` or visit the following URLs to access your microservices, substituting the appropriate hostname:
+open your terminal and send http get requests in a loop via `curl` command. 
+This request asks for the value of `key=1` and prints value and which pod has replied to the request.
+You might need to wait up to 30 sec before microservices accepts traffic.
+```
+while true; do curl 192.168.99.100:31000/get?key=1;echo; sleep 2; done
+```
 
-- {name-api}
-- {ping-api}/name-service
+You should see an out like below. You will see that value is `null` because we have not put any data deployment
+and responses are coming from different pods.
+[source, role="no_copy"]
+----
+{"value":null,"podName":"hazelcast-caching-statefulset-1"}
+{"value":null,"podName":"hazelcast-caching-statefulset-1"}
+{"value":null,"podName":"hazelcast-caching-statefulset-0"}
+{"value":null,"podName":"hazelcast-caching-statefulset-1"}
+{"value":null,"podName":"hazelcast-caching-statefulset-0"}
+----
 
-The first URL returns a brief greeting followed by the name of the pod that the `name` microservice
-runs in. The second URL returns `pong` if it received a good response from the `name-service`
-{kube} Service. Visiting `{ping-api}/[kube-service]` in general returns either
-a good or a bad response depending on whether `kube-service` is a valid {kube} Service that can be accessed.
+Break the current loop and put some data into hazelcast-caching microservice.
 
+[role='command']
+```
+curl "http://192.168.99.100:31000/put?key=1&value=hazelcast_springboot_openliberty"
+```
 
-== Add Hazelcast and Redeploy microservices
+Although request has been executed by one kubernetes pod, by querying the data in a loop will show data the data 
+is actually shared by multiple pods. To see this, execute following command again.
 
-add maven dependencies
-do the code change
-execute rbac
+[role='command']
+```
+while true; do curl 192.168.99.100:31000/get?key=1;echo; sleep 2; done
+```
 
-and show that both pods returning the data
+As you see both pods are returning the same data.
+
+[source, role="no_copy"]
+----
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-1"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-1"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-1"}
+----
 
 // =================================================================================================
 // Scaling with Hazelcast
@@ -274,7 +349,25 @@ and show that both pods returning the data
 
 == Scaling with Hazelcast
 
-Scale the cluster with one more pod and show that you still retrieve the data.
+Scale the cluster with one more pod and show that you still retrieve the shared data.
+
+[role='command']
+```
+kubectl scale deployment/name-deployment --replicas=3
+```
+As you can see, a new pod `hazelcast-caching-statefulset-2` has joined to the cluster and returns the value for the key=1
+`
+[source, role="no_copy"]
+----
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-2"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-2"}
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
+----
+
+
+
 
 // =================================================================================================
 // Testing microservices that are running on {kube}
@@ -282,79 +375,7 @@ Scale the cluster with one more pod and show that you still retrieve the data.
 
 == Testing microservices that are running on {kube}
 
-Write a simple test similar to THIS
-https://github.com/OpenLiberty/guide-kubernetes-intro/blob/master/start/name/src/test/java/it/io/openliberty/guides/name/NameEndpointTest.java
-
-
-A few tests are included for you to test the basic functionality of the microservices. If a test failure
-occurs, then you might have introduced a bug into the code. To run the tests, wait for all pods to be
-in the ready state before proceeding further. The default properties defined in the `pom.xml` are:
-
-[cols="15, 100", options="header"]
-|===
-| *Property*        | *Description*
-| cluster.ip        | IP or hostname for your cluster, `{minikube-ip}` by default, which is appropriate when using Minikube.
-| name.kube.service | Name of the {kube} Service wrapping the `name` pods, `name-service` by default.
-| name.node.port    | The NodePort of the {kube} Service `name-service`, 31000 by default.
-| ping.node.port    | The NodePort of the {kube} Service `ping-service`, 32000 by default.
-|===
-
-Navigate back to the `start` directory.
-
-****
-[system]#*{win} | {mac}*#
-
-Run the integration tests against a cluster running with a hostname of `localhost`:
-
-```
-mvn verify -Ddockerfile.skip=true -Dcluster.ip=localhost
-```
-
-[system]#*{linux}*#
-
-Run the integration tests against a cluster running at the default Minikube IP address:
-
-```
-mvn verify -Ddockerfile.skip=true
-```
-
-You can also run the integration tests with an IP address of `192.168.99.100`:
-
-```
-mvn verify -Ddockerfile.skip=true -Dcluster.ip=192.168.99.100
-```
-****
-
-The `dockerfile.skip` parameter is set to `true` in order to skip building a new Docker image.
-
-If the tests pass, you'll see an output similar to the following for each service respectively:
-
-[source, role="no_copy"]
-----
--------------------------------------------------------
- T E S T S
--------------------------------------------------------
-Running it.io.openliberty.guides.name.NameEndpointTest
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.673 sec - in it.io.openliberty.guides.name.NameEndpointTest
-
-Results :
-
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
-----
-
-[source, role="no_copy"]
-----
--------------------------------------------------------
- T E S T S
--------------------------------------------------------
-Running it.io.openliberty.guides.ping.PingEndpointTest
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.222 sec - in it.io.openliberty.guides.ping.PingEndpointTest
-
-Results :
-
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
-----
-
+TODO 
 
 // =================================================================================================
 // Tear Down
@@ -363,11 +384,10 @@ Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
 == Tearing down the environment
 
 When you no longer need your deployed microservices, you can delete all {kube} resources by running the `kubectl delete` command:
-
+You might need to wait up to 30 seconds as stateful sets kills pods one at a time.
 ```
 kubectl delete -f kubernetes.yaml
 ```
-
 
 include::{common-includes}/kube-minikube-teardown.adoc[]
 
@@ -379,8 +399,9 @@ include::{common-includes}/kube-minikube-teardown.adoc[]
 == Great work! You're done!
 
 You have just created a Spring Boot application, bundled it with openliberty and deployed to {kube}. 
-You then added {hazelcast} caching to the `hazelcast-caching`  and ran integration tests against `hazelcast-caching` 
-that are running in a {kube} cluster.
+You then added {hazelcast} caching to the `hazelcast-caching`,tested with a simple curl command. 
+You also scaled out the microservices and saw that data is shared between microservices
+As a last step, you ran integration tests against `hazelcast-caching`that is deployed in a {kube} cluster.
 
 // Include the below from the guides-common repo to tell users how they can contribute to the guide
 include::{common-includes}/finish.adoc[]
