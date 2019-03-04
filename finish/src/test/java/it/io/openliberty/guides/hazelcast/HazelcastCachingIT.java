@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package it.io.openliberty.guides;
+package it.io.openliberty.guides.hazelcast;
 
 import io.openliberty.guides.hazelcast.CommandResponse;
 import org.junit.Assert;
@@ -38,7 +38,7 @@ public class HazelcastCachingIT {
 
 
     @Test(timeout = 60000)
-    public void hazelcastCacheTest()
+    public void testHazelcastCache()
             throws Exception {
 
 
