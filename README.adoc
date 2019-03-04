@@ -63,7 +63,7 @@ Hazelcast is designed to scale up to hundreds and thousands of members.
 Simply add new members and they will automatically discover the cluster 
 and will linearly increase both memory and processing capacity
 
-=== Why is Spring Boot?
+== Why Spring Boot?
 Spring Boot makes it easy to create stand-alone, production-grade Spring based Applications that you can "just run".
 To learn more about Spring Boot. 
 http://spring.io/projects/spring-boot
@@ -139,14 +139,14 @@ https://github.com/OpenLiberty/boost/tree/master/boost-maven
 If you want to create your own Dockerfile then you can always use dockerfile-maven plugin. 
 please refer to https://openliberty.io/guides/kubernetes-intro.html#starting-and-preparing-your-cluster-for-deployment
 
-To build `hazelcast-caching` microservice, run the following command.
+To build `hazelcast-caching` microservice, run the following command in the `start` folder.
+This will build the docker image and push it to docker registry provided by minikube
 
 [role='command']
 ```
 mvn package
 ```
-This will build the docker image and push it to docker registry provided by minikube. 
-execute following command to see available docker images
+Execute following command to see available docker images
 
 [role='command']
 ```
@@ -224,9 +224,10 @@ To deploy the `hazelcast-caching` microservice, first create the `kubernetes.yam
 include::finish/kubernetes.yaml[tags=**;]
 ----
 
-This file defines two {kube} resources. It defines one statefulset and one service. 
+This file defines two {kube} resources: one statefulset and one service. 
 StatefulSet is preferred solution for Hazelcast because it enables controlled scale out/in of your microservices 
-for easy data distribution. To learn more about StatefulSet, you can visit Kubernetes documentationhttps://kubernetes.io/docs/tutorials/stateful-application/basic-stateful-set/
+for easy data distribution. To learn more about StatefulSet, you can visit Kubernetes documentation
+https://kubernetes.io/docs/tutorials/stateful-application/basic-stateful-set/
 
 By default, we create 2 replicas of `hazelcast-caching` microservice behind the `hazelcast-caching-service` which forwards
 requests to one of the pods available in the kubernetes cluster.
@@ -242,8 +243,7 @@ include::finish/rbac.yaml[tags=**;]
 ----
 
 Role Based Access Controller(RBAC) configuration is used to give access to Kubernetes Master API from pods which runs 
-microservices. Hazelcast requires a read access to autodiscovery other hazelcast members to create distributed cache among 
-clusters
+microservices. Hazelcast requires a read access to autodiscover other hazelcast members and form hazelcast cluster.
 
 Run the following commands to deploy the resources as defined in kubernetes.yaml and rbac.yaml in the specified order:
 
@@ -276,7 +276,7 @@ hazelcast-caching-statefulset-1   1/1       Running   0          20m
 You should also check if hazelcast cluster is formed by checking one of the pod's log file:
 
 ```
-kubectl logs pods
+kubectl logs hazelcast-caching-statefulset-1
 ```
 
 [source, role="no_copy"]
@@ -299,15 +299,16 @@ The default hostname for Docker Desktop is `localhost`.
 The default hostname for minikube is {minikube-ip}. Otherwise it can be found using the `minikube ip` command.
 ****
 
-open your terminal and send http get requests in a loop via `curl` command. 
+Open your favorite terminal and send http get requests in a loop via `curl` command. 
 This request asks for the value of `key=1` and prints value and which pod has replied to the request.
 You might need to wait up to 30 sec before microservices accepts traffic.
+
 ```
 while true; do curl 192.168.99.100:31000/get?key=1;echo; sleep 2; done
 ```
 
-You should see an out like below. You will see that value is `null` because we have not put any data deployment
-and responses are coming from different pods.
+You should see an output like below. The `value` is null because we have not put any data yet.
+`podname` shows that which kubernetes pod replied to the request.
 [source, role="no_copy"]
 ----
 {"value":null,"podName":"hazelcast-caching-statefulset-1"}
@@ -324,7 +325,7 @@ Break the current loop and put some data into hazelcast-caching microservice.
 curl "http://192.168.99.100:31000/put?key=1&value=hazelcast_springboot_openliberty"
 ```
 
-Although request has been executed by one kubernetes pod, by querying the data in a loop will show data the data 
+Although request has been executed by one specific kubernetes pod, by querying the data in a loop will show data the data 
 is actually shared by multiple pods. To see this, execute following command again.
 
 [role='command']
@@ -332,7 +333,7 @@ is actually shared by multiple pods. To see this, execute following command agai
 while true; do curl 192.168.99.100:31000/get?key=1;echo; sleep 2; done
 ```
 
-As you see both pods are returning the same data.
+As you can see both pods are returning the same data.
 
 [source, role="no_copy"]
 ----
@@ -349,25 +350,42 @@ As you see both pods are returning the same data.
 
 == Scaling with Hazelcast
 
-Scale the cluster with one more pod and show that you still retrieve the shared data.
+Scale the cluster with one more pod and see that you still retrieve the shared data.
 
 [role='command']
 ```
-kubectl scale deployment/name-deployment --replicas=3
+kubectl scale statefulset hazelcast-caching-statefulset --replicas=3
 ```
-As you can see, a new pod `hazelcast-caching-statefulset-2` has joined to the cluster and returns the value for the key=1
-`
+
+Run following command to see the latest status of the pods
+[role='command']
+```
+kubectl get pods
+```
+
+As you can see, a new pod `hazelcast-caching-statefulset-2` has joined to the cluster.
 [source, role="no_copy"]
 ----
-{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
-{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-2"}
-{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
+NAME                              READY     STATUS    RESTARTS   AGE
+hazelcast-caching-statefulset-0   1/1       Running   0          8m
+hazelcast-caching-statefulset-1   1/1       Running   0          8m
+hazelcast-caching-statefulset-2   1/1       Running   0          31s
+----
+
+Run the following command again to see the output
+[role='command']
+```
+while true; do curl 192.168.99.100:31000/get?key=1;echo; sleep 2; done
+```
+
+As you can see, `hazelcast-caching-statefulset-2` is returning correct data.
+
+[source, role="no_copy"]
+----
+{"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-1"}
 {"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-2"}
 {"value":"hazelcast_springboot_openliberty","podName":"hazelcast-caching-statefulset-0"}
 ----
-
-
-
 
 // =================================================================================================
 // Testing microservices that are running on {kube}
@@ -391,11 +409,11 @@ The `testHazelcastCache` test makes sure that the `/put` endpoint is handled by 
 and `/get` methods returns the same data from the other kubernetes pod.
 
 It first puts a key/value pair to `hazelcast-caching` microservice and keeps podname in the `firstpod`
-variable. In the second part, tests submits multipe `/get` requests until to see that podname is different then 
-initial pod which handled `/put` request.
+variable. In the second part, tests submits multiple `/get` requests until to see that podname is different then the pod 
+which initially handled `/put` request.
 
 In order to run integration tests, you must have a running `hazelcast-caching` microservices 
-in minikube environment and wait for all pods to be in the ready state before proceeding further. 
+in minikube environment. As you have gone through all previous steps, you already have it.
 
 The default properties defined in the pom.xml are:
 [cols="15, 100", options="header"]
@@ -408,15 +426,7 @@ The default properties defined in the pom.xml are:
 Navigate back to the `start` directory.
 
 ****
-[system]#*{win} | {mac}*#
-
-Run the integration tests against a cluster running with a hostname of `localhost`:
-[role='command']
-```
-mvn verify -Dcluster.ip=localhost
-```
-
-[system]#*{linux}*#
+[system]#*{linux} | {mac}*#
 
 Run the integration tests against a cluster running at the default Minikube IP address:
 [role='command']
@@ -424,8 +434,16 @@ Run the integration tests against a cluster running at the default Minikube IP a
 mvn verify
 ```
 
+[system]#*{win}*#
+
+Run the integration tests against a cluster running with a hostname of `localhost`:
+[role='command']
+```
+mvn verify -Dcluster.ip=localhost
+```
+
 Run the integration tests against an external IP address and port, 
-you can use `cluster.ip` and `cluster.port` based on your kubernetes cluster.
+you can use `cluster.ip` and `cluster.port` based kubernetes service on your kubernetes cluster.
 [role='command']
 ```
 mvn verify -Dcluster.ip=192.168.99.100 -Dcluster.port=31000
@@ -496,7 +514,7 @@ include::{common-includes}/kube-minikube-teardown.adoc[]
 You have just created a Spring Boot application, bundled it with openliberty and deployed to {kube}. 
 You then added {hazelcast} caching to the `hazelcast-caching`,tested with a simple curl command. 
 You also scaled out the microservices and saw that data is shared between microservices
-As a last step, you ran integration tests against `hazelcast-caching`that is deployed in a {kube} cluster.
+As a last step, you ran integration tests against `hazelcast-caching` that was deployed in a {kube} cluster.
 
 // Include the below from the guides-common repo to tell users how they can contribute to the guide
 include::{common-includes}/finish.adoc[]
